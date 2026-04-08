@@ -10,12 +10,6 @@ class DNSNode(BaseModel):
     enabled: bool = Field(..., description="是否启用")
 
 
-class DomainPoolRef(BaseModel):
-    """动态域名关联的Pool引用"""
-
-    name: str = Field(..., description="Pool名称")
-
-
 class DomainRecordRef(BaseModel):
     """静态域名关联的Record引用"""
 
@@ -29,7 +23,7 @@ class HealthCheck(BaseModel):
     port: int = Field(..., description="健康检查端口")
 
 
-class RecordObject(BaseModel):
+class Record(BaseModel):
     """记录对象"""
 
     name: str = Field(..., description="记录名称")
@@ -47,7 +41,7 @@ class Pool(BaseModel):
     name: str = Field(..., description="pool名称")
     type: Literal["A", "AAAA"] = Field(..., description="域名类型")
     enabled: bool = Field(..., description="是否启用")
-    records: List[RecordObject] = Field(
+    records: List[Record] = Field(
         default_factory=list, description="服务成员列表"
     )
     health_check: Optional[HealthCheck] = Field(None, description="健康检查配置")
