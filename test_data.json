@@ -1,0 +1,22 @@
+{
+    "device_info": {
+        "management_ip": "1.1.1.1",
+        "username": "view",
+        "password": "test"
+    },
+    "operation": "add_domain",
+    "domain": {
+        "name": "test.psbc.com",
+        "type": "dynamic",
+        "algorithm": "wrr",
+        "ttl": 60,
+        "pools": [
+            {
+                "name": "test.psbc.com_v4_pool"
+            },
+            {
+                "name": "test.psbc.com_v6_pool"
+            }
+        ]
+    }
+}
