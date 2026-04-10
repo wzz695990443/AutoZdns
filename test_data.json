@@ -1,21 +1,29 @@
 {
     "device_info": {
-        "management_ip": "1.1.1.1",
-        "username": "view",
-        "password": "test"
+        "management_ip": "10.1.114.14",
+        "username": "admin",
+        "password": "Admin@123"
     },
     "operation": "add_domain",
     "domain": {
-        "name": "test.psbc.com",
-        "type": "dynamic",
-        "algorithm": "wrr",
+        "name": "xixi.test.com",
+        "type": "static",
         "ttl": 60,
-        "pools": [
+        "records": [
             {
-                "name": "test.psbc.com_v4_pool"
+                "name": "",
+                "type": "A",
+                "value": "1.1.1.1"
             },
             {
-                "name": "test.psbc.com_v6_pool"
+                "name": "",
+                "type": "A",
+                "value": "2.2.2.2"
+            },
+            {
+                "name": "",
+                "type": "AAAA",
+                "value": "2001:db8::1"
             }
         ]
     }
