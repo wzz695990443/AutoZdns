@@ -1,0 +1,25 @@
+{
+    "device_info": {
+        "management_ip": "10.1.114.14",
+        "username": "admin",
+        "password": "Admin@123"
+    },
+    "operation": "add_domain",
+    "data": {
+      "name": "ccc.test.com",
+      "type": "dynamic",
+      "algorithm": "wrr",
+      "ttl": 60,
+      "pools": [
+        {
+          "name": "DC-A"
+        },
+        {
+          "name": "DC-B"
+        },
+        {
+          "name": "DC-A-v6"
+        }
+      ]
+    }
+}

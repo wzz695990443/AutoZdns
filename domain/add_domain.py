@@ -58,6 +58,7 @@ def _log_http_response(module: str, response: requests.Response) -> None:
 #############################################################
 ### API: ADD 视图增加域名 ###
 
+
 class GPoolItem(BaseModel):
     gpool_name: str
     ratio: str = Field(default="1", description="权重")
@@ -84,7 +85,7 @@ class GMapRequest(BaseModel):
     key_1: Optional[str] = Field(default="", description="备注")
 
 
-def create_gmap_record(
+def post_gmap_record(
     req: GMapRequest, verify_ssl: bool = False, auth: tuple = ("admin", "Admin@123")
 ) -> requests.Response:
     """
@@ -131,6 +132,7 @@ def create_gmap_record(
 ############################################################
 ### API: default 视图增加域名 ###
 
+
 class RdataItem(BaseModel):
     value: str
 
@@ -148,7 +150,7 @@ class RrsRequest(BaseModel):
     is_enable: str = Field(default="yes", description="是否启用")
 
 
-def create_rrs_record(
+def post_rrs_record(
     req: RrsRequest, verify_ssl: bool = False, auth: tuple = ("admin", "Admin@123")
 ) -> requests.Response:
     """
@@ -195,6 +197,7 @@ def create_rrs_record(
 #############################################################
 ### 标准输入参数规范 ###
 
+
 class DeviceInfo(BaseModel):
     management_ip: str = Field(..., description="管理节点 IP")
     username: str = Field(..., description="用户名")
@@ -213,7 +216,7 @@ class DomainPoolRef(BaseModel):
 
 class DynamicDomainInfo(BaseModel):
     name: str = Field(..., description="域名")
-    type: str = Field(default="dynamic", description="域名解析方式")
+    type: Literal["dynamic"] = Field(default="dynamic", description="域名解析方式")
     algorithm: str = Field(default="rr", description="域名算法")
     ttl: int = Field(..., description="TTL")
     pools: List[DomainPoolRef] = Field(..., description="地址池列表")
@@ -221,7 +224,7 @@ class DynamicDomainInfo(BaseModel):
 
 class StaticDomainInfo(BaseModel):
     name: str = Field(..., description="域名")
-    type: str = Field(default="static", description="域名解析方式")
+    type: Literal["static"] = Field(default="static", description="域名解析方式")
     ttl: int = Field(..., description="TTL")
     records: List[StaticRecord] = Field(..., description="记录列表")
 
@@ -236,7 +239,22 @@ class AddDomainRequest(BaseModel):
 
 
 #############################################################
+### 标准返回值规范 ###
+
+DomainResult = Annotated[
+    Union[DynamicDomainInfo, StaticDomainInfo],
+    Field(discriminator="type"),
+]
+
+class AddDomainResponse(BaseModel):
+    success: bool = Field(..., description="操作是否成功")
+    result: Optional[DomainResult] = Field(default=None, description="返回的域名信息")
+    message: List[str] = Field(..., description="操作结果消息")
+
+
+#############################################################
 ### API: 获取地址池 ###
+
 
 class GPoolInfo(BaseModel):
     name: str = Field(..., description="地址池名称")
@@ -309,11 +327,13 @@ def get_gpool_list(req: DeviceInfo) -> List[GPoolInfo]:
 #############################################################
 ### 增加域名核心逻辑 ###
 
+
 def _ensure_fqdn(name: str) -> str:
     """
     确保域名以点号结尾，符合 FQDN 规范。
     """
     return name if name.endswith(".") else f"{name}."
+
 
 def _build_dynamic_zone_name(name: str) -> str:
     """
@@ -325,6 +345,7 @@ def _build_dynamic_zone_name(name: str) -> str:
         raise ValueError(f"非法域名: {name}")
     return f"{labels[-2]}.{labels[-1]}."
 
+
 def _build_static_zone_name(name: str) -> str:
     """
     构建静态域名的区域名称。
@@ -335,6 +356,7 @@ def _build_static_zone_name(name: str) -> str:
     if len(labels) < 2:
         raise ValueError(f"非法域名: {name}")
     return f"{labels[-2]}.{labels[-1]}"
+
 
 def _build_record_name(record_name: str, domain_name: str) -> str:
     """
@@ -362,10 +384,15 @@ def _resolve_record_type(record: StaticRecord) -> str:
     根据记录类型和记录值解析最终的记录类型。
     规则说明：
     1. 如果记录类型已经是 A 或 AAAA，直接返回。
-    2. 根据记录值的 IP 版本确定记录类型，IPv4 返回 A，IPv6 返回 AAAA。
+    2. 如果已经显式传入其他记录类型，如 CNAME、MX、TXT，直接返回原始类型。
+    3. 仅当记录类型为空时，才根据记录值的 IP 版本确定记录类型，IPv4 返回 A，IPv6 返回 AAAA。
     """
-    if record.type in {"A", "AAAA"}:
-        return record.type
+    record_type = record.type.strip().upper()
+    if record_type in {"A", "AAAA"}:
+        return record_type
+
+    if record_type:
+        return record_type
 
     ip_version = ipaddress.ip_address(record.value).version
     return "A" if ip_version == 4 else "AAAA"
@@ -382,7 +409,7 @@ def _validate_dynamic_pools(
     3. 根据地址池类型分组，仅支持 A 和 AAAA 类型。
     4. 如果没有可用的 A 或 AAAA 地址池，返回错误信息。
     """
-    
+
     _log_step(
         "dynamic-pool",
         "开始校验动态域名地址池",
@@ -433,14 +460,22 @@ def _validate_dynamic_pools(
     return None, grouped_pools
 
 
-def add_domain(data: Dict[str, Any]) -> Dict[str, Any]:
+def _build_add_domain_response(
+    success: bool,
+    message: List[str],
+    result: Optional[Union[DynamicDomainInfo, StaticDomainInfo]] = None,
+) -> AddDomainResponse:
+    return AddDomainResponse(success=success, result=result, message=message)
+
+
+def add_domain(data: Dict[str, Any]) -> AddDomainResponse:
     """
     添加域名记录
     逻辑说明：
     1. 验证输入数据结构和内容。
     2. 根据域名类型（dynamic 或 static）执行不同的处理流程。
-    3. 对于 dynamic 域名，验证关联的地址池是否存在且类型正确，然后调用 create_gmap_record 创建 GMap 记录。
-    4. 对于 static 域名，构建完整记录名称并调用 create_rrs_record 创建 RRS 记录。
+    3. 对于 dynamic 域名，验证关联的地址池是否存在且类型正确，然后调用 post_gmap_record 创建 GMap 记录。
+    4. 对于 static 域名，构建完整记录名称并调用 post_rrs_record 创建 RRS 记录。
     5. 捕获并返回任何验证错误或请求异常，确保函数的健壮性。
 
     """
@@ -450,10 +485,10 @@ def add_domain(data: Dict[str, Any]) -> Dict[str, Any]:
         request = AddDomainRequest.model_validate(data)
     except ValidationError as error:
         _log_step("add-domain", "输入校验失败", errors=error.errors())
-        return {
-            "success": False,
-            "message": error.json(indent=2),
-        }
+        return _build_add_domain_response(
+            success=False,
+            message=[error.json(indent=2)],
+        )
 
     auth = (request.device_info.username, request.device_info.password)
     record_fqdn = _ensure_fqdn(request.data.name)
@@ -483,10 +518,11 @@ def add_domain(data: Dict[str, Any]) -> Dict[str, Any]:
             )
             if pool_error:
                 _log_step("add-domain", "动态域名地址池校验失败", error=pool_error)
-                return {
-                    "success": False,
-                    "message": pool_error,
-                }
+                return _build_add_domain_response(
+                    success=False,
+                    result=request.data,
+                    message=[pool_error],
+                )
 
             responses: List[str] = []
             success = True
@@ -515,7 +551,7 @@ def add_domain(data: Dict[str, Any]) -> Dict[str, Any]:
                     failure_response_rrs_ttl=5,
                     failure_response_soa_ttl=5,
                 )
-                response = create_gmap_record(req=gmap_request, auth=auth)
+                response = post_gmap_record(req=gmap_request, auth=auth)
                 response_text = response.text.strip() or "无返回内容"
                 responses.append(
                     f"dynamic {record_type}: {response.status_code} - {response_text}"
@@ -529,10 +565,11 @@ def add_domain(data: Dict[str, Any]) -> Dict[str, Any]:
                 success=success,
                 responses=responses,
             )
-            return {
-                "success": success,
-                "message": "; ".join(responses),
-            }
+            return _build_add_domain_response(
+                success=success,
+                result=request.data,
+                message=responses,
+            )
 
         _log_step(
             "add-domain",
@@ -577,7 +614,7 @@ def add_domain(data: Dict[str, Any]) -> Dict[str, Any]:
                 ttl=request.data.ttl,
                 rdata=record_values,
             )
-            response = create_rrs_record(req=rrs_request, auth=auth)
+            response = post_rrs_record(req=rrs_request, auth=auth)
             response_text = response.text.strip() or "无返回内容"
             responses.append(
                 f"{record_name} {record_type}: {response.status_code} - {response_text}"
@@ -591,22 +628,25 @@ def add_domain(data: Dict[str, Any]) -> Dict[str, Any]:
             success=success,
             responses=responses,
         )
-        return {
-            "success": success,
-            "message": "; ".join(responses),
-        }
+        return _build_add_domain_response(
+            success=success,
+            result=request.data,
+            message=responses,
+        )
     except (ValidationError, ValueError) as error:
         _log_exception("add-domain", f"处理 add_domain 时发生校验或值错误: {error}")
-        return {
-            "success": False,
-            "message": str(error),
-        }
+        return _build_add_domain_response(
+            success=False,
+            result=request.data,
+            message=[str(error)],
+        )
     except requests.RequestException as error:
         _log_exception("add-domain", f"处理 add_domain 时发生请求异常: {error}")
-        return {
-            "success": False,
-            "message": str(error),
-        }
+        return _build_add_domain_response(
+            success=False,
+            result=request.data,
+            message=[str(error)],
+        )
 
 
 #############################################################
@@ -620,4 +660,6 @@ if __name__ == "__main__":
     with open(input_json, "r", encoding="utf-8") as file:
         input_data = json.load(file)
 
-    print(json.dumps(add_domain(input_data), ensure_ascii=False, indent=2))
+    result = add_domain(input_data)
+    print("\n******* Add Domain Result *******")
+    print(result.model_dump_json(indent=2, ensure_ascii=False))
