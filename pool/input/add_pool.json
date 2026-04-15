@@ -1,0 +1,28 @@
+{
+    "device_info": {
+        "management_ip": "20.200.18.82",
+        "username": "admin",
+        "password": "Admin@123"
+    },
+    "operation": "create_pool",
+    "data": {
+        "name": "test.hx.psbc_v4_pool",
+		"type":"A",
+        "records": [
+            {
+                "name": "1.1.1.1_443",
+				"weight":1
+            },
+            {
+                "name": "1.1.1.2_443",
+				"weight":2
+            }
+        ],
+		"health_check":{
+			"type":"tcp",
+			"port":443
+		},
+		"first_algorithm":"wrr",
+		"second_algorithm":"none"
+    }
+}

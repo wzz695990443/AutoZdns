@@ -19,7 +19,7 @@ logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
 )
-logger = logging.getLogger("autozdns.disable_domain")
+logger = logging.getLogger("autozdns.modify_domain")
 
 
 def _format_log_value(value: Any) -> str:
@@ -83,12 +83,15 @@ class DeviceInfo(BaseModel):
 class DataBase(BaseModel):
     name: str = Field(..., description="域名")
     type: str = Field(..., description="静态动态类别，如 static 或 dynamic")
-    enabled: bool = Field(default=True, description="是否启用")
+    algorithm: Optional[str] = Field(None, description="算法类型，仅动态域名适用")
+    ttl: Optional[int] = Field(None, description="TTL 值，静态动态域名皆适用")
+    qps: Optional[str] = Field(default="", description="废弃字段,无用,但需要保留以兼容输入数据结构")
+    enabled: Optional[bool] = Field(None, description="是否启用")
 
 
-class DisableDomainRequest(BaseModel):
+class ModifyDomainRequest(BaseModel):
     device_info: DeviceInfo = Field(..., description="设备信息")
-    operation: Literal["disable_domain"] = Field(..., description="操作类型")
+    operation: Literal["modify_domain"] = Field(..., description="操作类型")
     data: Union[DataBase, List[DataBase]] = Field(..., description="数据")
 
 
@@ -96,7 +99,7 @@ class DisableDomainRequest(BaseModel):
 ### 标准输出规范 ###
 
 
-class DisableDomainResponse(BaseModel):
+class ModifyDomainResponse(BaseModel):
     success: bool = Field(..., description="操作是否成功")
     result: List[DataBase] = Field(default_factory=list, description="操作结果数据")
     message: List[str] = Field(default_factory=list, description="操作结果消息")
@@ -260,7 +263,7 @@ class RrsRequestBase(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     host: str = Field(..., description="主机 IP")
-    is_enable: str = Field(..., description="是否启用")
+    ttl: int = Field(..., description="TTL 值")
     ids: List[str] = Field(..., description="记录 ID 列表")
     desc: Dict[str, str] = Field(
         ...,
