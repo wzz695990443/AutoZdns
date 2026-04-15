@@ -1,11 +1,10 @@
-import ipaddress
 import json
 import logging
 import os
 import requests
 import urllib3
 import sys
-from typing import List, Dict, Any, Optional, Literal, Union, Tuple, Annotated
+from typing import List, Dict, Any, Optional, Literal, Union, Annotated
 from pydantic import BaseModel, Field, ValidationError
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -238,18 +237,9 @@ def _ensure_fqdn(name: str) -> str:
     return name
 
 
-def _build_dynamic_zone_name(name: str) -> str:
+def _build_zone_name(name: str) -> str:
     """
-    从完整域名中提取动态区域名称。
-    例如：www.test.com -> test.com
-    """
-    parts = name.split(".")
-    return ".".join(parts[-2:])
-
-
-def _build_static_zone_name(name: str) -> str:
-    """
-    从完整域名中提取静态区域名称。
+    从完整域名中提取区域名称。
     例如：www.test.com -> test.com
     """
     parts = name.split(".")
@@ -304,16 +294,17 @@ def delete_domain(data: Dict[str, Any]) -> DeleteDomainResponse:
 
     auth = (request.device_info.username, request.device_info.password)
     record_fqdn = _ensure_fqdn(request.data.name)
-    dynamic_zone_name = _build_dynamic_zone_name(request.data.name)
-    static_zone_name = _build_static_zone_name(request.data.name)
+    zone_name = _build_zone_name(request.data.name)
     _log_step(
         "delete-domain",
         "输入校验成功",
         domain_type=request.data.type,
         record_fqdn=record_fqdn,
-        dynamic_zone_name=dynamic_zone_name,
-        static_zone_name=static_zone_name,
+        zone_name=zone_name,
     )
+
+    responses: List[str] = []
+    success = True
 
     try:
         if isinstance(request.data, DynamicDomainInfo):
@@ -323,9 +314,6 @@ def delete_domain(data: Dict[str, Any]) -> DeleteDomainResponse:
                 domain_name=request.data.name,
                 record_types=request.data.records,
             )
-
-            responses: List[str] = []
-            success = True
             
             for record_type in request.data.records:
                 _log_step(
@@ -336,7 +324,7 @@ def delete_domain(data: Dict[str, Any]) -> DeleteDomainResponse:
 
                 gmap_request = DeleteGMapRequest(
                     host=request.device_info.management_ip,
-                    zone=dynamic_zone_name,
+                    zone=zone_name,
                     name=record_fqdn,
                     type=record_type,
                 )
@@ -367,9 +355,6 @@ def delete_domain(data: Dict[str, Any]) -> DeleteDomainResponse:
                 domain_name=request.data.name,
                 records=request.data.records,
             )
-
-            responses: List[str] = []
-            success = True
             
             for record in request.data.records:
                 record_name = _build_record_name(record.name, request.data.name)
@@ -383,7 +368,7 @@ def delete_domain(data: Dict[str, Any]) -> DeleteDomainResponse:
                 rrs_request = DeleteRrsRequest(
                     host=request.device_info.management_ip,
                     view="default",
-                    zone=static_zone_name,
+                    zone=zone_name,
                     name=record_name,
                     type=record.type,
                 )
