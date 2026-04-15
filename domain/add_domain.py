@@ -54,10 +54,64 @@ def _log_http_response(module: str, response: requests.Response) -> None:
         body_preview=body_preview,
     )
 
+#############################################################
+### 标准输入规范 ###
+
+class DeviceInfo(BaseModel):
+    management_ip: str = Field(..., description="管理节点 IP")
+    username: str = Field(..., description="用户名")
+    password: str = Field(..., description="密码")
+
+
+class StaticRecord(BaseModel):
+    name: str = Field(default="", description="记录名称")
+    type: str = Field(..., description="记录类型")
+    value: str = Field(..., description="记录值")
+
+
+class DomainPoolRef(BaseModel):
+    name: str = Field(..., description="地址池名称")
+
+
+class DynamicDomainInfo(BaseModel):
+    name: str = Field(..., description="域名")
+    type: Literal["dynamic"] = Field(default="dynamic", description="域名解析方式")
+    algorithm: str = Field(default="rr", description="域名算法")
+    ttl: int = Field(..., description="TTL")
+    pools: List[DomainPoolRef] = Field(..., description="地址池列表")
+
+
+class StaticDomainInfo(BaseModel):
+    name: str = Field(..., description="域名")
+    type: Literal["static"] = Field(default="static", description="域名解析方式")
+    ttl: int = Field(..., description="TTL")
+    records: List[StaticRecord] = Field(..., description="记录列表")
+
+
+class AddDomainRequest(BaseModel):
+    device_info: DeviceInfo = Field(..., description="设备信息")
+    operation: Literal["add_domain"] = Field(..., description="操作类型")
+    data: Annotated[
+        Union[DynamicDomainInfo, StaticDomainInfo],
+        Field(discriminator="type"),
+    ]
+
+
+#############################################################
+### 标准输出规范 ###
+
+DomainResult = Annotated[
+    Union[DynamicDomainInfo, StaticDomainInfo],
+    Field(discriminator="type"),
+]
+
+class AddDomainResponse(BaseModel):
+    success: bool = Field(..., description="操作是否成功")
+    result: Optional[DomainResult] = Field(default=None, description="返回的域名信息")
+    message: List[str] = Field(..., description="操作结果消息")
 
 #############################################################
 ### API: ADD 视图增加域名 ###
-
 
 class GPoolItem(BaseModel):
     gpool_name: str
@@ -132,7 +186,6 @@ def post_gmap_record(
 ############################################################
 ### API: default 视图增加域名 ###
 
-
 class RdataItem(BaseModel):
     value: str
 
@@ -177,7 +230,7 @@ def post_rrs_record(
     }
 
     _log_step(
-        "rrs",
+        "post rrs",
         "准备发送 RRS 请求",
         url=url,
         zone=zone_value,
@@ -193,68 +246,8 @@ def post_rrs_record(
     _log_http_response("rrs", response)
     return response
 
-
-#############################################################
-### 标准输入参数规范 ###
-
-
-class DeviceInfo(BaseModel):
-    management_ip: str = Field(..., description="管理节点 IP")
-    username: str = Field(..., description="用户名")
-    password: str = Field(..., description="密码")
-
-
-class StaticRecord(BaseModel):
-    name: str = Field(..., description="记录名称")
-    type: str = Field(..., description="记录类型")
-    value: str = Field(..., description="记录值")
-
-
-class DomainPoolRef(BaseModel):
-    name: str = Field(..., description="地址池名称")
-
-
-class DynamicDomainInfo(BaseModel):
-    name: str = Field(..., description="域名")
-    type: Literal["dynamic"] = Field(default="dynamic", description="域名解析方式")
-    algorithm: str = Field(default="rr", description="域名算法")
-    ttl: int = Field(..., description="TTL")
-    pools: List[DomainPoolRef] = Field(..., description="地址池列表")
-
-
-class StaticDomainInfo(BaseModel):
-    name: str = Field(..., description="域名")
-    type: Literal["static"] = Field(default="static", description="域名解析方式")
-    ttl: int = Field(..., description="TTL")
-    records: List[StaticRecord] = Field(..., description="记录列表")
-
-
-class AddDomainRequest(BaseModel):
-    device_info: DeviceInfo = Field(..., description="设备信息")
-    operation: Literal["add_domain"] = Field(..., description="操作类型")
-    data: Annotated[
-        Union[DynamicDomainInfo, StaticDomainInfo],
-        Field(discriminator="type"),
-    ]
-
-
-#############################################################
-### 标准返回值规范 ###
-
-DomainResult = Annotated[
-    Union[DynamicDomainInfo, StaticDomainInfo],
-    Field(discriminator="type"),
-]
-
-class AddDomainResponse(BaseModel):
-    success: bool = Field(..., description="操作是否成功")
-    result: Optional[DomainResult] = Field(default=None, description="返回的域名信息")
-    message: List[str] = Field(..., description="操作结果消息")
-
-
 #############################################################
 ### API: 获取地址池 ###
-
 
 class GPoolInfo(BaseModel):
     name: str = Field(..., description="地址池名称")
@@ -326,7 +319,6 @@ def get_gpool_list(req: DeviceInfo) -> List[GPoolInfo]:
 
 #############################################################
 ### 增加域名核心逻辑 ###
-
 
 def _ensure_fqdn(name: str) -> str:
     """
@@ -467,6 +459,8 @@ def _build_add_domain_response(
 ) -> AddDomainResponse:
     return AddDomainResponse(success=success, result=result, message=message)
 
+def _build_static_view_name(domain_name: str) -> str:
+    return "default"
 
 def add_domain(data: Dict[str, Any]) -> AddDomainResponse:
     """
@@ -494,6 +488,7 @@ def add_domain(data: Dict[str, Any]) -> AddDomainResponse:
     record_fqdn = _ensure_fqdn(request.data.name)
     dynamic_zone_name = _build_dynamic_zone_name(request.data.name)
     static_zone_name = _build_static_zone_name(request.data.name)
+    static_view_name = _build_static_view_name(request.data.name)
     _log_step(
         "add-domain",
         "输入校验成功",
@@ -607,7 +602,7 @@ def add_domain(data: Dict[str, Any]) -> AddDomainResponse:
             )
             rrs_request = RrsRequest(
                 host=request.device_info.management_ip,
-                view="default",
+                view=static_view_name,
                 zone=static_zone_name,
                 name=record_name,
                 type=record_type,
