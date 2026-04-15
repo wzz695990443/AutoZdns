@@ -6,15 +6,15 @@
     },
     "operation": "create_pool",
     "data": {
-        "name": "test.hx.psbc_v4_pool",
+        "name": "wzw_test_pool",
 		"type":"A",
         "records": [
             {
-                "name": "1.1.1.1_443",
+                "name": "10.10.10.100_443",
 				"weight":1
             },
             {
-                "name": "1.1.1.2_443",
+                "name": "10.10.10.101_443",
 				"weight":2
             }
         ],
