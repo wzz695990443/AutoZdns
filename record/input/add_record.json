@@ -1,0 +1,20 @@
+{
+  "device_info": {
+    "management_ip": "20.200.18.82",
+    "username": "admin",
+    "password": "Admin@123"
+  },
+  "operation": "create_record",
+  "data": [
+    {
+      "name": "",
+      "value": "10.10.10.100",
+      "port": 443
+    },
+    {
+      "name": "",
+      "value": "10.10.10.101",
+      "port": 443
+    }
+  ]
+}

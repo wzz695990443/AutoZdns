@@ -1,0 +1,19 @@
+{
+  "device_info": {
+    "management_ip": "20.200.18.82",
+    "username": "admin",
+    "password": "Admin@123"
+  },
+  "operation": "query_records",
+  "record": {
+    "value": "1.0.0."
+  },
+  "additions": {
+    "limit": 20,
+    "orders": {
+      "order_key": "record_value",
+      "order_type": "ASC"
+    },
+    "match_type": "fuzzy"
+  }
+}

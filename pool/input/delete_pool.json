@@ -1,0 +1,11 @@
+{
+  "device_info": {
+    "management_ip": "10.1.114.14",
+    "username": "admin",
+    "password": "Admin@123"
+  },
+  "operation": "delete_pool",
+  "data": {
+    "name": "test4"
+  }
+}

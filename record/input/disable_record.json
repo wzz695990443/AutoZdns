@@ -1,0 +1,22 @@
+{
+    "device_info": {
+        "management_ip": "10.1.114.14",
+        "username": "admin",
+        "password": "Admin@123"
+    },
+    "operation": "disable_record",
+    "data": [
+		{	
+			"name": "SLB-D",
+			"value": "10.1.114.65",
+			"domain_names":[""],
+			"pool_names":["test2"]
+		},
+		{
+			"name": "SLB-C",
+			"value": "1.2.4.8",
+			"domain_names": ["www.test.com."],
+			"pool_names": [""]
+		}
+    ]
+}
