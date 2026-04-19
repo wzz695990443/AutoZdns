@@ -4,10 +4,10 @@ import os
 import requests
 import urllib3
 import sys
-from typing import List, Dict, Any, Optional, Literal, Tuple
+from typing import List, Dict, Any, Literal, Tuple
 from urllib.parse import quote
 
-from pydantic import BaseModel, Field, ValidationError, ConfigDict, model_validator
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 urllib3.disable_warnings(urllib3.exceptions.NotOpenSSLWarning)
@@ -20,7 +20,7 @@ logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
 )
-logger = logging.getLogger("autozdns.disable_record")
+logger = logging.getLogger("autozdns.enable_record")
 
 
 def _format_log_value(value: Any) -> str:
@@ -69,7 +69,7 @@ class DeviceInfo(BaseModel):
 class DataBase(BaseModel):
     name: str = Field(..., description="IP地址+端口,例如1.1.1.1_443")
     value: str = Field(..., description="IP")
-    enabled: bool = Field(default=False, description="是否已禁用")
+    enabled: bool = Field(default=False, description="是否已启用")
     domain_names: List[str] = Field(default_factory=list, description="关联的域名列表")
     pool_names: List[str] = Field(default_factory=list, description="关联的地址池列表")
 
@@ -86,19 +86,17 @@ class DataBase(BaseModel):
         return self
 
 
-class DisableRecordRequest(BaseModel):
+class EnableRecordRequest(BaseModel):
     device_info: DeviceInfo = Field(..., description="设备信息")
-    operation: Literal["disable_record", "delete_record"] = Field(
-        ..., description="操作类型"
-    )
-    data: List[DataBase] = Field(..., description="要禁用的记录列表")
+    operation: Literal["enable_record"] = Field(..., description="操作类型")
+    data: List[DataBase] = Field(..., description="要启用的记录列表")
 
 
 #############################################################
 ### 标准输出规范 ###
 
 
-class DisableRecordResponse(BaseModel):
+class EnableRecordResponse(BaseModel):
     success: bool = Field(..., description="操作是否成功")
     result: List[DataBase] = Field(default_factory=list, description="操作结果数据")
     message: List[str] = Field(default_factory=list, description="操作结果消息")
@@ -119,13 +117,13 @@ class PutGpoolGmemberRequest(BaseModel):
     ids: List[str] = Field(default_factory=list, description="地址池成员ID列表")
 
     @model_validator(mode="after")
-    def fill_dc_gmember_name(self):
+    def fill_dc_gmember_name(self) -> "PutGpoolGmemberRequest":
         if self.dc_gmember_name == "":
             self.dc_gmember_name = f"{self.dc_name}/{self.gmember_name}"
         return self
 
     @model_validator(mode="after")
-    def fill_ids(self):
+    def fill_ids(self) -> "PutGpoolGmemberRequest":
         if not self.ids:
             self.ids = [f"{self.dc_name}*{self.gmember_name}"]
         return self
@@ -315,7 +313,7 @@ def get_gpool(
 
 
 #############################################################
-### 禁用地址池成员记录核心逻辑 ###
+### 启用地址池成员记录核心逻辑 ###
 
 
 def _ensure_fqdn(name: str) -> str:
@@ -398,7 +396,7 @@ def _query_domain_related_pool_names(
                 auth=auth,
             )
         except requests.RequestException as exc:
-            _log_exception("disable_record", "查询动态域名失败")
+            _log_exception("enable_record", "查询动态域名失败")
             messages.append(f"域名 {domain_name}: 查询动态域名请求失败: {exc}")
             had_error = True
             continue
@@ -413,7 +411,7 @@ def _query_domain_related_pool_names(
         try:
             resources = _parse_json_resources(response, "动态域名查询")
         except ValueError as exc:
-            _log_exception("disable_record", "解析动态域名查询结果失败")
+            _log_exception("enable_record", "解析动态域名查询结果失败")
             messages.append(f"域名 {domain_name}: {exc}")
             had_error = True
             continue
@@ -465,7 +463,7 @@ def _query_pools_by_names(
             auth=auth,
         )
     except requests.RequestException as exc:
-        _log_exception("disable_record", "查询地址池失败")
+        _log_exception("enable_record", "查询地址池失败")
         return {}, [f"查询地址池请求失败: {exc}"], True
 
     if not response.ok:
@@ -480,7 +478,7 @@ def _query_pools_by_names(
     try:
         resources = _parse_json_resources(response, "地址池查询")
     except ValueError as exc:
-        _log_exception("disable_record", "解析地址池查询结果失败")
+        _log_exception("enable_record", "解析地址池查询结果失败")
         return {}, [str(exc)], True
 
     pool_map: Dict[str, Dict[str, Any]] = {}
@@ -517,7 +515,7 @@ def _build_put_gpoolgmember_request(
         host=host,
         pool=pool_name,
         ratio=_safe_int(member.get("ratio"), default=1),
-        enable="no",
+        enable="yes",
         dc_name=dc_name,
         gmember_name=gmember_name,
     )
@@ -541,7 +539,7 @@ def _find_matching_members(
     return matches
 
 
-def _process_disable_record_item(
+def _process_enable_record_item(
     device_info: DeviceInfo,
     item: DataBase,
 ) -> Tuple[DataBase, List[str], bool]:
@@ -597,9 +595,9 @@ def _process_disable_record_item(
         member_name = str(member.get("gmember_name", "")).strip() or item.name
         member_enable = str(member.get("enable", "")).lower()
 
-        if member_enable == "no":
+        if member_enable == "yes":
             messages.append(
-                f"{item.name}: 地址池 {pool_name} 成员 {member_name} 已是禁用状态"
+                f"{item.name}: 地址池 {pool_name} 成员 {member_name} 已是启用状态"
             )
             continue
 
@@ -619,22 +617,22 @@ def _process_disable_record_item(
         try:
             response = put_gpoolgmember(request_payload, auth=auth)
         except requests.RequestException as exc:
-            _log_exception("disable_record", "调用 put_gpoolgmember 失败")
+            _log_exception("enable_record", "调用 put_gpoolgmember 失败")
             had_error = True
             messages.append(
-                f"{item.name}: 地址池 {pool_name} 成员 {member_name} 禁用请求失败: {exc}"
+                f"{item.name}: 地址池 {pool_name} 成员 {member_name} 启用请求失败: {exc}"
             )
             continue
 
         if response.ok:
             messages.append(
-                f"{item.name}: 地址池 {pool_name} 成员 {member_name} 禁用成功"
+                f"{item.name}: 地址池 {pool_name} 成员 {member_name} 启用成功"
             )
             continue
 
         had_error = True
         messages.append(
-            f"{item.name}: 地址池 {pool_name} 成员 {member_name} 禁用失败, status={response.status_code}, body={response.text[:200]}"
+            f"{item.name}: 地址池 {pool_name} 成员 {member_name} 启用失败, status={response.status_code}, body={response.text[:200]}"
         )
 
     item_success = bool(matched_members) and not had_error
@@ -642,26 +640,24 @@ def _process_disable_record_item(
     return updated_item, messages, item_success
 
 
-def disable_record(data: Dict[str, Any]) -> DisableRecordResponse:
+def enable_record(data: Dict[str, Any]) -> EnableRecordResponse:
     try:
-        request_data = DisableRecordRequest.model_validate(data)
+        request_data = EnableRecordRequest.model_validate(data)
         _log_step(
-            "disable_record",
+            "enable_record",
             "输入参数校验通过",
             record_count=len(request_data.data),
         )
     except ValidationError as exc:
-        _log_exception("disable_record", "输入参数校验失败")
-        return DisableRecordResponse(
-            success=False, message=[f"输入参数校验失败: {exc}"]
-        )
+        _log_exception("enable_record", "输入参数校验失败")
+        return EnableRecordResponse(success=False, message=[f"输入参数校验失败: {exc}"])
 
     result: List[DataBase] = []
     messages: List[str] = []
     all_success = True
 
     for item in request_data.data:
-        updated_item, item_messages, item_success = _process_disable_record_item(
+        updated_item, item_messages, item_success = _process_enable_record_item(
             request_data.device_info,
             item,
         )
@@ -669,7 +665,7 @@ def disable_record(data: Dict[str, Any]) -> DisableRecordResponse:
         messages.extend(item_messages)
         all_success = all_success and item_success
 
-    return DisableRecordResponse(
+    return EnableRecordResponse(
         success=all_success,
         result=result,
         message=messages,
@@ -680,12 +676,12 @@ if __name__ == "__main__":
     input_path = (
         sys.argv[1]
         if len(sys.argv) > 1
-        else os.path.join(os.path.dirname(__file__), "input", "disable_record.json")
+        else os.path.join(os.path.dirname(__file__), "input", "enable_record.json")
     )
 
     with open(input_path, "r", encoding="utf-8") as file:
         input_data = json.load(file)
 
-    response = disable_record(input_data)
-    print("\n******* Disable Record Result *******")
+    response = enable_record(input_data)
+    print("\n******* Enable Record Result *******")
     print(json.dumps(response.model_dump(), ensure_ascii=False, indent=4))

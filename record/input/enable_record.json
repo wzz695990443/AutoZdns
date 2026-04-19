@@ -1,0 +1,22 @@
+{
+  "device_info": {
+    "management_ip": "10.1.114.14",
+    "username": "admin",
+    "password": "Admin@123"
+  },
+  "operation": "enable_record",
+  "data": [
+    {
+      "name": "1.1.1.1_443",
+      "value": "1.1.1.1",
+      "domain_names": ["test.hx.psbc"],
+      "pool_names": ["test.hx.psbc_v4_pool"]
+    },
+    {
+      "name": "1.1.1.2_443",
+      "value": "1.1.1.2",
+      "domain_names": ["test.hx.psbc"],
+      "pool_names": ["test.hx.psbc_v4_pool"]
+    }
+  ]
+}

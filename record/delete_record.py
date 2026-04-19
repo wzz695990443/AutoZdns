@@ -4,7 +4,7 @@ import os
 import requests
 import urllib3
 import sys
-from typing import List, Dict, Any, Optional, Literal, Tuple
+from typing import List, Dict, Any, Literal, Tuple
 from urllib.parse import quote
 
 from pydantic import BaseModel, Field, ValidationError, ConfigDict, model_validator
@@ -20,7 +20,7 @@ logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
 )
-logger = logging.getLogger("autozdns.disable_record")
+logger = logging.getLogger("autozdns.delete_record")
 
 
 def _format_log_value(value: Any) -> str:
@@ -69,7 +69,7 @@ class DeviceInfo(BaseModel):
 class DataBase(BaseModel):
     name: str = Field(..., description="IP地址+端口,例如1.1.1.1_443")
     value: str = Field(..., description="IP")
-    enabled: bool = Field(default=False, description="是否已禁用")
+    enabled: bool = Field(default=False, description="是否已删除")
     domain_names: List[str] = Field(default_factory=list, description="关联的域名列表")
     pool_names: List[str] = Field(default_factory=list, description="关联的地址池列表")
 
@@ -86,66 +86,77 @@ class DataBase(BaseModel):
         return self
 
 
-class DisableRecordRequest(BaseModel):
+class DeleteRecordRequest(BaseModel):
     device_info: DeviceInfo = Field(..., description="设备信息")
-    operation: Literal["disable_record", "delete_record"] = Field(
-        ..., description="操作类型"
-    )
-    data: List[DataBase] = Field(..., description="要禁用的记录列表")
+    operation: Literal["delete_record"] = Field(..., description="操作类型")
+    data: List[DataBase] = Field(..., description="要删除的记录列表")
 
 
 #############################################################
 ### 标准输出规范 ###
 
 
-class DisableRecordResponse(BaseModel):
+class DeleteRecordResponse(BaseModel):
     success: bool = Field(..., description="操作是否成功")
     result: List[DataBase] = Field(default_factory=list, description="操作结果数据")
     message: List[str] = Field(default_factory=list, description="操作结果消息")
 
 
 #############################################################
-### API: 修改地址池成员 ###
+### API: 删除地址池成员 ###
 
 
-class PutGpoolGmemberRequest(BaseModel):
-    host: str = Field(..., description="设备管理IP")
+class DeleteGpoolgmemberRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    host: str = Field(..., description="主机 IP")
     pool: str = Field(..., description="地址池名称")
-    dc_gmember_name: str = Field(default="", description="数据中心名称_gmember名称")
-    ratio: int = Field(..., description="权重")
-    enable: str = Field(default="yes", description="是否启用，默认为yes")
-    dc_name: str = Field(..., description="数据中心名称")
-    gmember_name: str = Field(..., description="gmember名称")
-    ids: List[str] = Field(default_factory=list, description="地址池成员ID列表")
-
-    @model_validator(mode="after")
-    def fill_dc_gmember_name(self):
-        if self.dc_gmember_name == "":
-            self.dc_gmember_name = f"{self.dc_name}/{self.gmember_name}"
-        return self
-
-    @model_validator(mode="after")
-    def fill_ids(self):
-        if not self.ids:
-            self.ids = [f"{self.dc_name}*{self.gmember_name}"]
-        return self
+    ids: List[str] = Field(..., description="记录 ID 列表")
+    desc: Dict[str, str] = Field(
+        ...,
+        alias="_desc",
+        serialization_alias="_desc",
+        description="记录 ID 与描述的映射关系",
+    )
 
 
-def put_gpoolgmember(
-    req: PutGpoolGmemberRequest,
+def _encode_form_value(value: Any) -> str:
+    return quote(str(value), safe="")
+
+
+def _build_gpoolgmember_delete_body(
+    req: DeleteGpoolgmemberRequest,
+) -> Tuple[str, str, str]:
+    payload = req.model_dump(by_alias=True, exclude_none=True)
+    host_value = str(payload.pop("host", ""))
+    pool_value = str(payload.pop("pool", ""))
+    desc_map = payload.get("_desc", {})
+    record_ids = payload.get("ids", [])
+
+    body_parts: List[str] = []
+    for record_id in record_ids:
+        record_id_text = str(record_id)
+        desc_text = str(desc_map.get(record_id_text, ""))
+        body_parts.append(f"_desc[{record_id_text}]={_encode_form_value(desc_text)}")
+
+    for record_id in record_ids:
+        body_parts.append(f"ids[]={_encode_form_value(record_id)}")
+
+    return host_value, pool_value, "&".join(body_parts)
+
+
+def delete_gpoolgmember(
+    req: DeleteGpoolgmemberRequest,
     verify_ssl: bool = False,
     auth: tuple = ("admin", "Admin@123"),
 ) -> requests.Response:
-    payload = req.model_dump(by_alias=True, exclude_none=True)
-    host_value = payload.pop("host", None)
-    pool_value = payload.pop("pool", None)
-
+    host_value, pool_value, body_string = _build_gpoolgmember_delete_body(req)
     url = f"https://{host_value}:20120/gpool/{pool_value}/gpoolgmember"
 
     headers = {
         "Request-By": "Python-Requests",
         "Accept": "application/json, text/plain, */*",
-        "Content-Type": "application/json",
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
         "Referer": f"https://{host_value}/",
         "sec-ch-ua-platform": '"Python-API"',
         "sec-ch-ua": '"Python-API"',
@@ -153,20 +164,21 @@ def put_gpoolgmember(
     }
 
     _log_step(
-        "put_gpoolgmember",
-        "准备发送更新地址池成员请求",
+        "delete_gpoolgmember",
+        "准备发送地址池成员删除请求",
         url=url,
-        pool=payload.get("ids", []),
+        pool=pool_value,
+        body_preview=body_string[:300],
     )
 
-    response = requests.put(
+    response = requests.delete(
         url,
         headers=headers,
-        json=payload,
+        data=body_string,
         verify=verify_ssl,
         auth=auth,
     )
-    _log_http_response("put_gpoolgmember", response)
+    _log_http_response("delete_gpoolgmember", response)
     return response
 
 
@@ -315,7 +327,7 @@ def get_gpool(
 
 
 #############################################################
-### 禁用地址池成员记录核心逻辑 ###
+### 删除地址池成员记录核心逻辑 ###
 
 
 def _ensure_fqdn(name: str) -> str:
@@ -328,15 +340,6 @@ def _build_dynamic_zone_name(name: str) -> str:
     if len(labels) < 2:
         raise ValueError(f"非法域名: {name}")
     return f"{labels[-2]}.{labels[-1]}."
-
-
-def _safe_int(value: Any, default: int = 0) -> int:
-    try:
-        if value in (None, ""):
-            return default
-        return int(value)
-    except (TypeError, ValueError):
-        return default
 
 
 def _parse_json_resources(
@@ -398,7 +401,7 @@ def _query_domain_related_pool_names(
                 auth=auth,
             )
         except requests.RequestException as exc:
-            _log_exception("disable_record", "查询动态域名失败")
+            _log_exception("delete_record", "查询动态域名失败")
             messages.append(f"域名 {domain_name}: 查询动态域名请求失败: {exc}")
             had_error = True
             continue
@@ -413,7 +416,7 @@ def _query_domain_related_pool_names(
         try:
             resources = _parse_json_resources(response, "动态域名查询")
         except ValueError as exc:
-            _log_exception("disable_record", "解析动态域名查询结果失败")
+            _log_exception("delete_record", "解析动态域名查询结果失败")
             messages.append(f"域名 {domain_name}: {exc}")
             had_error = True
             continue
@@ -465,7 +468,7 @@ def _query_pools_by_names(
             auth=auth,
         )
     except requests.RequestException as exc:
-        _log_exception("disable_record", "查询地址池失败")
+        _log_exception("delete_record", "查询地址池失败")
         return {}, [f"查询地址池请求失败: {exc}"], True
 
     if not response.ok:
@@ -480,7 +483,7 @@ def _query_pools_by_names(
     try:
         resources = _parse_json_resources(response, "地址池查询")
     except ValueError as exc:
-        _log_exception("disable_record", "解析地址池查询结果失败")
+        _log_exception("delete_record", "解析地址池查询结果失败")
         return {}, [str(exc)], True
 
     pool_map: Dict[str, Dict[str, Any]] = {}
@@ -503,23 +506,29 @@ def _member_matches(member: Dict[str, Any], item: DataBase) -> bool:
     return member_name == item.name and member_ip == item.value
 
 
-def _build_put_gpoolgmember_request(
+def _build_delete_gpoolgmember_request(
     host: str,
     pool_name: str,
     member: Dict[str, Any],
-) -> PutGpoolGmemberRequest:
+) -> DeleteGpoolgmemberRequest:
+    member_id = str(member.get("id", "")).strip()
     dc_name = str(member.get("dc_name", "")).strip()
     gmember_name = str(member.get("gmember_name", "")).strip()
-    if dc_name == "" or gmember_name == "":
-        raise ValueError("地址池成员缺少 dc_name 或 gmember_name")
 
-    return PutGpoolGmemberRequest(
+    if member_id == "":
+        if dc_name == "" or gmember_name == "":
+            raise ValueError("地址池成员缺少 id 或 dc_name/gmember_name")
+        member_id = f"{dc_name}*{gmember_name}"
+
+    desc_value = str(member.get("record", "")).strip()
+    if desc_value == "":
+        desc_value = str(member.get("name", "")).strip() or member_id
+
+    return DeleteGpoolgmemberRequest(
         host=host,
         pool=pool_name,
-        ratio=_safe_int(member.get("ratio"), default=1),
-        enable="no",
-        dc_name=dc_name,
-        gmember_name=gmember_name,
+        ids=[member_id],
+        _desc={member_id: desc_value},
     )
 
 
@@ -541,7 +550,7 @@ def _find_matching_members(
     return matches
 
 
-def _process_disable_record_item(
+def _process_delete_record_item(
     device_info: DeviceInfo,
     item: DataBase,
 ) -> Tuple[DataBase, List[str], bool]:
@@ -595,16 +604,9 @@ def _process_disable_record_item(
 
     for pool_name, member in matched_members:
         member_name = str(member.get("gmember_name", "")).strip() or item.name
-        member_enable = str(member.get("enable", "")).lower()
-
-        if member_enable == "no":
-            messages.append(
-                f"{item.name}: 地址池 {pool_name} 成员 {member_name} 已是禁用状态"
-            )
-            continue
 
         try:
-            request_payload = _build_put_gpoolgmember_request(
+            request_payload = _build_delete_gpoolgmember_request(
                 device_info.management_ip,
                 pool_name,
                 member,
@@ -617,24 +619,24 @@ def _process_disable_record_item(
             continue
 
         try:
-            response = put_gpoolgmember(request_payload, auth=auth)
+            response = delete_gpoolgmember(request_payload, auth=auth)
         except requests.RequestException as exc:
-            _log_exception("disable_record", "调用 put_gpoolgmember 失败")
+            _log_exception("delete_record", "调用 delete_gpoolgmember 失败")
             had_error = True
             messages.append(
-                f"{item.name}: 地址池 {pool_name} 成员 {member_name} 禁用请求失败: {exc}"
+                f"{item.name}: 地址池 {pool_name} 成员 {member_name} 删除请求失败: {exc}"
             )
             continue
 
         if response.ok:
             messages.append(
-                f"{item.name}: 地址池 {pool_name} 成员 {member_name} 禁用成功"
+                f"{item.name}: 地址池 {pool_name} 成员 {member_name} 删除成功"
             )
             continue
 
         had_error = True
         messages.append(
-            f"{item.name}: 地址池 {pool_name} 成员 {member_name} 禁用失败, status={response.status_code}, body={response.text[:200]}"
+            f"{item.name}: 地址池 {pool_name} 成员 {member_name} 删除失败, status={response.status_code}, body={response.text[:200]}"
         )
 
     item_success = bool(matched_members) and not had_error
@@ -642,26 +644,24 @@ def _process_disable_record_item(
     return updated_item, messages, item_success
 
 
-def disable_record(data: Dict[str, Any]) -> DisableRecordResponse:
+def delete_record(data: Dict[str, Any]) -> DeleteRecordResponse:
     try:
-        request_data = DisableRecordRequest.model_validate(data)
+        request_data = DeleteRecordRequest.model_validate(data)
         _log_step(
-            "disable_record",
+            "delete_record",
             "输入参数校验通过",
             record_count=len(request_data.data),
         )
     except ValidationError as exc:
-        _log_exception("disable_record", "输入参数校验失败")
-        return DisableRecordResponse(
-            success=False, message=[f"输入参数校验失败: {exc}"]
-        )
+        _log_exception("delete_record", "输入参数校验失败")
+        return DeleteRecordResponse(success=False, message=[f"输入参数校验失败: {exc}"])
 
     result: List[DataBase] = []
     messages: List[str] = []
     all_success = True
 
     for item in request_data.data:
-        updated_item, item_messages, item_success = _process_disable_record_item(
+        updated_item, item_messages, item_success = _process_delete_record_item(
             request_data.device_info,
             item,
         )
@@ -669,7 +669,7 @@ def disable_record(data: Dict[str, Any]) -> DisableRecordResponse:
         messages.extend(item_messages)
         all_success = all_success and item_success
 
-    return DisableRecordResponse(
+    return DeleteRecordResponse(
         success=all_success,
         result=result,
         message=messages,
@@ -680,12 +680,12 @@ if __name__ == "__main__":
     input_path = (
         sys.argv[1]
         if len(sys.argv) > 1
-        else os.path.join(os.path.dirname(__file__), "input", "disable_record.json")
+        else os.path.join(os.path.dirname(__file__), "input", "delete_record.json")
     )
 
     with open(input_path, "r", encoding="utf-8") as file:
         input_data = json.load(file)
 
-    response = disable_record(input_data)
-    print("\n******* Disable Record Result *******")
+    response = delete_record(input_data)
+    print("\n******* Delete Record Result *******")
     print(json.dumps(response.model_dump(), ensure_ascii=False, indent=4))

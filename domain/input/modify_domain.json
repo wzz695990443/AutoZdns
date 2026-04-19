@@ -1,15 +1,15 @@
 {
   "device_info": {
-    "management_ip": "20.200.18.82",
+    "management_ip": "10.1.114.14",
     "username": "admin",
     "password": "Admin@123"
   },
   "operation": "modify_domain",
   "data": {
-    "name": "www.wzw.com",
-    "type": "dynamic",
-    "algorithm": "wrr",
-    "ttl": 60,
+    "name": "www.xixi.com.",
+    "type": "static",
+    "algorithm": "",
+    "ttl": 200,
     "qps": 50000
   }
 }
