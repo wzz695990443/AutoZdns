@@ -7,16 +7,16 @@
   "operation": "enable_record",
   "data": [
     {
-      "name": "1.1.1.1_443",
-      "value": "1.1.1.1",
-      "domain_names": ["test.hx.psbc"],
-      "pool_names": ["test.hx.psbc_v4_pool"]
+      "name": "SLB-C",
+      "value": "1.2.4.8",
+      "domain_names": ["www.test.com"],
+      "pool_names": ["DC-A", "DC-B"]
     },
     {
-      "name": "1.1.1.2_443",
-      "value": "1.1.1.2",
-      "domain_names": ["test.hx.psbc"],
-      "pool_names": ["test.hx.psbc_v4_pool"]
+      "name": "aaa",
+      "value": "2.2.2.1",
+      "domain_names": ["www.wzw.com."],
+      "pool_names": [""]
     }
   ]
 }

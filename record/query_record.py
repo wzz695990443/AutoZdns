@@ -1,6 +1,8 @@
 import json
 import logging
+from logging.handlers import RotatingFileHandler
 import os
+import socket
 import requests
 import urllib3
 import sys
@@ -16,11 +18,42 @@ urllib3.disable_warnings(urllib3.exceptions.NotOpenSSLWarning)
 ### 日志配置 ###
 
 LOG_LEVEL = os.getenv("AUTOZDNS_LOG_LEVEL", "INFO").upper()
-logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL, logging.INFO),
-    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+REQUEST_TIMEOUT = float(os.getenv("AUTOZDNS_REQUEST_TIMEOUT", "15"))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+LOG_DIR = os.getenv("AUTOZDNS_LOG_DIR", os.path.join(PROJECT_ROOT, "logs"))
+LOG_FILE = os.path.join(
+    LOG_DIR,
+    f"{os.path.splitext(os.path.basename(__file__))[0]}.log",
 )
-logger = logging.getLogger("autozdns.query_record")
+
+socket.setdefaulttimeout(REQUEST_TIMEOUT)
+
+
+def _configure_logger() -> logging.Logger:
+    os.makedirs(LOG_DIR, exist_ok=True)
+    configured_logger = logging.getLogger(
+        f"autozdns.{os.path.splitext(os.path.basename(__file__))[0]}"
+    )
+    configured_logger.handlers.clear()
+    configured_logger.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
+
+    file_handler = RotatingFileHandler(
+        LOG_FILE,
+        maxBytes=2 * 1024 * 1024,
+        backupCount=3,
+        encoding="utf-8",
+    )
+    file_handler.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
+    file_handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s")
+    )
+
+    configured_logger.addHandler(file_handler)
+    configured_logger.propagate = False
+    return configured_logger
+
+
+logger = _configure_logger()
 
 
 def _format_log_value(value: Any) -> str:
@@ -53,6 +86,32 @@ def _log_http_response(module: str, response: requests.Response) -> None:
         status_code=response.status_code,
         content_type=response.headers.get("Content-Type", ""),
         body_preview=body_preview,
+    )
+
+
+def _default_input_path(filename: str) -> str:
+    return os.path.join(os.path.dirname(__file__), "input", filename)
+
+
+def _load_input_data(input_path: str) -> Any:
+    with open(input_path, "r", encoding="utf-8") as file:
+        return json.load(file)
+
+
+def _print_cli_result(result: BaseModel) -> None:
+    print(result.model_dump_json(indent=2, ensure_ascii=False))
+
+
+def _print_cli_error(message: str) -> None:
+    print(
+        json.dumps(
+            {
+                "success": False,
+                "message": [message],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
     )
 
 
@@ -562,16 +621,24 @@ def query_record(data: Dict[str, Any]) -> QueryRecordResponse:
     )
 
 
-if __name__ == "__main__":
+def main() -> int:
     input_path = (
-        sys.argv[1]
-        if len(sys.argv) > 1
-        else os.path.join(os.path.dirname(__file__), "input", "query_record.json")
+        sys.argv[1] if len(sys.argv) > 1 else _default_input_path("query_record.json")
     )
+    _log_step("main", "脚本启动", input_path=input_path, log_file=LOG_FILE)
 
-    with open(input_path, "r", encoding="utf-8") as file:
-        input_data = json.load(file)
+    try:
+        input_data = _load_input_data(input_path)
+    except (OSError, json.JSONDecodeError) as exc:
+        _log_exception("main", f"读取输入文件失败: {input_path}")
+        _print_cli_error(f"读取输入文件失败: {exc}")
+        return 1
 
     response = query_record(input_data)
-    print("\n******* Query Record Result *******")
-    print(json.dumps(response.model_dump(), ensure_ascii=False, indent=4))
+    _log_step("main", "脚本执行完成", success=response.success)
+    _print_cli_result(response)
+    return 0 if response.success else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

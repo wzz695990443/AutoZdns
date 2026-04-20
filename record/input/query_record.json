@@ -1,12 +1,12 @@
 {
   "device_info": {
-    "management_ip": "20.200.18.82",
+    "management_ip": "10.1.114.14",
     "username": "admin",
     "password": "Admin@123"
   },
   "operation": "query_records",
   "record": {
-    "value": "1.0.0."
+    "value": "10.20.0."
   },
   "additions": {
     "limit": 20,
