@@ -1,0 +1,27 @@
+{
+  "device_info": {
+    "management_ip": "10.1.114.14",
+    "username": "admin",
+    "password": "Admin@123"
+  },
+  "operation": "modify_pool",
+  "data": {
+    "name": "test2",
+    "records": [
+      {
+        "name": "SLB-C",
+        "weight": 5
+      },
+      {
+        "name": "aaa",
+        "weight": 6
+      }
+    ],
+    "first_algorithm": "wrr",
+    "second_algorithm": "rr",
+    "health_check": {
+      "type": "tcp",
+      "port": 443
+    }
+  }
+}

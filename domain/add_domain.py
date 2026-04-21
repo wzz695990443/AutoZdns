@@ -1,7 +1,9 @@
 import ipaddress
 import json
 import logging
+from logging.handlers import RotatingFileHandler
 import os
+import socket
 import requests
 import urllib3
 import sys
@@ -15,11 +17,42 @@ urllib3.disable_warnings(urllib3.exceptions.NotOpenSSLWarning)
 ### 日志配置 ###
 
 LOG_LEVEL = os.getenv("AUTOZDNS_LOG_LEVEL", "INFO").upper()
-logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL, logging.INFO),
-    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+REQUEST_TIMEOUT = float(os.getenv("AUTOZDNS_REQUEST_TIMEOUT", "15"))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+LOG_DIR = os.getenv("AUTOZDNS_LOG_DIR", os.path.join(PROJECT_ROOT, "logs"))
+LOG_FILE = os.path.join(
+    LOG_DIR,
+    f"{os.path.splitext(os.path.basename(__file__))[0]}.log",
 )
-logger = logging.getLogger("autozdns.add_domain")
+
+socket.setdefaulttimeout(REQUEST_TIMEOUT)
+
+
+def _configure_logger() -> logging.Logger:
+    os.makedirs(LOG_DIR, exist_ok=True)
+    configured_logger = logging.getLogger(
+        f"autozdns.{os.path.splitext(os.path.basename(__file__))[0]}"
+    )
+    configured_logger.handlers.clear()
+    configured_logger.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
+
+    file_handler = RotatingFileHandler(
+        LOG_FILE,
+        maxBytes=2 * 1024 * 1024,
+        backupCount=3,
+        encoding="utf-8",
+    )
+    file_handler.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
+    file_handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s")
+    )
+
+    configured_logger.addHandler(file_handler)
+    configured_logger.propagate = False
+    return configured_logger
+
+
+logger = _configure_logger()
 
 
 def _format_log_value(value: Any) -> str:
@@ -53,6 +86,91 @@ def _log_http_response(module: str, response: requests.Response) -> None:
         content_type=response.headers.get("Content-Type", ""),
         body_preview=body_preview,
     )
+
+
+def _default_input_path(filename: str) -> str:
+    return os.path.join(os.path.dirname(__file__), "input", filename)
+
+
+def _load_input_data(input_path: str) -> Any:
+    with open(input_path, "r", encoding="utf-8") as file:
+        return json.load(file)
+
+
+def _print_cli_result(result: BaseModel) -> None:
+    print(result.model_dump_json(indent=2, ensure_ascii=False))
+
+
+def _print_cli_error(message: str) -> None:
+    print(
+        json.dumps(
+            {
+                "success": False,
+                "message": [message],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
+#############################################################
+### 标准输入规范 ###
+
+
+class DeviceInfo(BaseModel):
+    management_ip: str = Field(..., description="管理节点 IP")
+    username: str = Field(..., description="用户名")
+    password: str = Field(..., description="密码")
+
+
+class StaticRecord(BaseModel):
+    name: str = Field(default="", description="记录名称")
+    type: str = Field(..., description="记录类型")
+    value: str = Field(..., description="记录值")
+
+
+class DomainPoolRef(BaseModel):
+    name: str = Field(..., description="地址池名称")
+
+
+class DynamicDomainInfo(BaseModel):
+    name: str = Field(..., description="域名")
+    type: Literal["dynamic"] = Field(default="dynamic", description="域名解析方式")
+    algorithm: str = Field(default="rr", description="域名算法")
+    ttl: int = Field(..., description="TTL")
+    pools: List[DomainPoolRef] = Field(..., description="地址池列表")
+
+
+class StaticDomainInfo(BaseModel):
+    name: str = Field(..., description="域名")
+    type: Literal["static"] = Field(default="static", description="域名解析方式")
+    ttl: int = Field(..., description="TTL")
+    records: List[StaticRecord] = Field(..., description="记录列表")
+
+
+class AddDomainRequest(BaseModel):
+    device_info: DeviceInfo = Field(..., description="设备信息")
+    operation: Literal["add_domain"] = Field(..., description="操作类型")
+    data: Annotated[
+        Union[DynamicDomainInfo, StaticDomainInfo],
+        Field(discriminator="type"),
+    ]
+
+
+#############################################################
+### 标准输出规范 ###
+
+DomainResult = Annotated[
+    Union[DynamicDomainInfo, StaticDomainInfo],
+    Field(discriminator="type"),
+]
+
+
+class AddDomainResponse(BaseModel):
+    success: bool = Field(..., description="操作是否成功")
+    result: Optional[DomainResult] = Field(default=None, description="返回的域名信息")
+    message: List[str] = Field(..., description="操作结果消息")
 
 
 #############################################################
@@ -177,7 +295,7 @@ def post_rrs_record(
     }
 
     _log_step(
-        "rrs",
+        "post rrs",
         "准备发送 RRS 请求",
         url=url,
         zone=zone_value,
@@ -192,64 +310,6 @@ def post_rrs_record(
     )
     _log_http_response("rrs", response)
     return response
-
-
-#############################################################
-### 标准输入参数规范 ###
-
-
-class DeviceInfo(BaseModel):
-    management_ip: str = Field(..., description="管理节点 IP")
-    username: str = Field(..., description="用户名")
-    password: str = Field(..., description="密码")
-
-
-class StaticRecord(BaseModel):
-    name: str = Field(..., description="记录名称")
-    type: str = Field(..., description="记录类型")
-    value: str = Field(..., description="记录值")
-
-
-class DomainPoolRef(BaseModel):
-    name: str = Field(..., description="地址池名称")
-
-
-class DynamicDomainInfo(BaseModel):
-    name: str = Field(..., description="域名")
-    type: Literal["dynamic"] = Field(default="dynamic", description="域名解析方式")
-    algorithm: str = Field(default="rr", description="域名算法")
-    ttl: int = Field(..., description="TTL")
-    pools: List[DomainPoolRef] = Field(..., description="地址池列表")
-
-
-class StaticDomainInfo(BaseModel):
-    name: str = Field(..., description="域名")
-    type: Literal["static"] = Field(default="static", description="域名解析方式")
-    ttl: int = Field(..., description="TTL")
-    records: List[StaticRecord] = Field(..., description="记录列表")
-
-
-class AddDomainRequest(BaseModel):
-    device_info: DeviceInfo = Field(..., description="设备信息")
-    operation: Literal["add_domain"] = Field(..., description="操作类型")
-    data: Annotated[
-        Union[DynamicDomainInfo, StaticDomainInfo],
-        Field(discriminator="type"),
-    ]
-
-
-#############################################################
-### 标准返回值规范 ###
-
-DomainResult = Annotated[
-    Union[DynamicDomainInfo, StaticDomainInfo],
-    Field(discriminator="type"),
-]
-
-class AddDomainResponse(BaseModel):
-    success: bool = Field(..., description="操作是否成功")
-    result: Optional[DomainResult] = Field(default=None, description="返回的域名信息")
-    message: List[str] = Field(..., description="操作结果消息")
 
 
 #############################################################
@@ -468,6 +528,10 @@ def _build_add_domain_response(
     return AddDomainResponse(success=success, result=result, message=message)
 
 
+def _build_static_view_name(domain_name: str) -> str:
+    return "default"
+
+
 def add_domain(data: Dict[str, Any]) -> AddDomainResponse:
     """
     添加域名记录
@@ -494,6 +558,7 @@ def add_domain(data: Dict[str, Any]) -> AddDomainResponse:
     record_fqdn = _ensure_fqdn(request.data.name)
     dynamic_zone_name = _build_dynamic_zone_name(request.data.name)
     static_zone_name = _build_static_zone_name(request.data.name)
+    static_view_name = _build_static_view_name(request.data.name)
     _log_step(
         "add-domain",
         "输入校验成功",
@@ -607,7 +672,7 @@ def add_domain(data: Dict[str, Any]) -> AddDomainResponse:
             )
             rrs_request = RrsRequest(
                 host=request.device_info.management_ip,
-                view="default",
+                view=static_view_name,
                 zone=static_zone_name,
                 name=record_name,
                 type=record_type,
@@ -651,15 +716,25 @@ def add_domain(data: Dict[str, Any]) -> AddDomainResponse:
 
 #############################################################
 
-if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("请提供 JSON 文件路径")
-        sys.exit(1)
 
-    input_json = sys.argv[1]
-    with open(input_json, "r", encoding="utf-8") as file:
-        input_data = json.load(file)
+def main() -> int:
+    input_path = (
+        sys.argv[1] if len(sys.argv) > 1 else _default_input_path("add_domain.json")
+    )
+    _log_step("main", "脚本启动", input_path=input_path, log_file=LOG_FILE)
+
+    try:
+        input_data = _load_input_data(input_path)
+    except (OSError, json.JSONDecodeError) as exc:
+        _log_exception("main", f"读取输入文件失败: {input_path}")
+        _print_cli_error(f"读取输入文件失败: {exc}")
+        return 1
 
     result = add_domain(input_data)
-    print("\n******* Add Domain Result *******")
-    print(result.model_dump_json(indent=2, ensure_ascii=False))
+    _log_step("main", "脚本执行完成", success=result.success)
+    _print_cli_result(result)
+    return 0 if result.success else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,11 @@
+{
+  "device_info": {
+    "management_ip": "20.200.18.82",
+    "username": "admin",
+    "password": "Admin@123"
+  },
+  "operation": "enable_pool",
+  "data": {
+    "name": "wzw_pool"
+  }
+}
